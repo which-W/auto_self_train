@@ -25,8 +25,8 @@
 
 3. **读取关键文件**：
    - `train.py` —— 训练脚本，唯一允许修改的文件
-   - `prepare.py` 或等价的数据准备脚本（只读，不修改）
-   - 确认 `--train_data_path` 和 `--valid_data_path` 的实际路径
+   - `dataset_process.py` —— 数据处理脚本（只读，不修改）
+   - 确认 `--train_data_path` 和 `--valid_data_path` 的实际路径（数据需为 `.npy` memmap 格式，`np.uint16` 类型）
 
 4. **初始化结果记录文件**：
    ```bash
@@ -47,16 +47,17 @@
 
 | 类别 | 参数 |
 |------|------|
-| 模型架构 | `--d_model`, `--n_head`, `--n_layer`, `--d_ff`, `--max_seq_len` |
+| 模型架构 | `--d_model`, `--n_head`, `--n_layer`, `--d_ff`, `--max_seq_len`, `--vocab_size`, `--theta` |
 | 正则化结构 | `--no_rms_norm`, `--norm_rope` (pre/post), `--no_rope` |
-| 激活函数 | `--ffn_type` (swiglu/silu) |
+| 激活函数 | `--ffn_type` (swiglu/silu) — **注意：当前 TransformerBlock 硬编码使用 SwiGLU，此参数暂不生效** |
 | 优化器 | `--max_lr`, `--min_lr`, `--weight_decay`, `--warmup_steps` |
-| 训练过程 | `--batch_size`, `--max_grad_norm` |
+| 训练过程 | `--batch_size`, `--max_grad_norm`, `--eval_steps` |
+| 检查点 | `--checkpoint_dir`, `--save_interval`, `--resume_from` |
 | 其他 | `train.py` 中任何可改的代码逻辑 |
 
 ### 不允许修改的内容
 
-- 数据准备脚本（`prepare.py` 或等价文件）
+- 数据处理脚本（`dataset_process.py`）
 - 评估逻辑
 - 安装新的依赖包
 
@@ -130,8 +131,8 @@ uv run train.py \
 ## 读取结果
 
 ```bash
-# 读取验证集损失（主要指标）
-grep "Validation Loss" run.log | tail -5
+# 读取验证集损失（主要指标）—— train.py 输出格式为 "Validation Loss:"
+grep "Validation Loss:" run.log | tail -5
 
 # 如果脚本最后有汇总输出
 tail -n 20 run.log
@@ -237,31 +238,31 @@ uv run train.py \
 
 ### 第三步：模型大小 vs. 深度
 
-在同等参数量下，宽而浅 vs. 窄而深：
+在同等参数量下，宽而浅 vs. 窄而深（**6GB 显存限制下需缩小规模**）：
 
-| 实验 | `d_model` | `n_layer` | `n_head` | `d_ff` |
-|------|-----------|-----------|----------|--------|
-| baseline | 512 | 6 | 8 | 2048 |
-| wider_shallow | 768 | 4 | 12 | 3072 |
-| deeper_narrow | 384 | 10 | 6 | 1536 |
-| larger | 768 | 8 | 12 | 3072 |
+| 实验 | `d_model` | `n_layer` | `n_head` | `d_ff` | `max_seq_len` | `batch_size` |
+|------|-----------|-----------|----------|--------|---------------|--------------|
+| baseline | 512 | 4 | 8 | 2048 | 256 | 4 |
+| wider_shallow | 512 | 3 | 8 | 2048 | 256 | 4 |
+| deeper_narrow | 384 | 6 | 6 | 1536 | 256 | 4 |
+| minimal | 256 | 4 | 4 | 1024 | 256 | 8 |
 
 ### 第四步：结构消融
 
-| 实验 | 改动 | 命令行开关 |
-|------|------|-----------|
-| post_norm | 改为 post-norm | `--norm_rope post` |
-| no_rope | 禁用 RoPE | `--no_rope` |
-| silu | 改用 SiLU | `--ffn_type silu` |
-| no_rms | 移除 RMSNorm | `--no_rms_norm` |
+| 实验 | 改动 | 命令行开关 | 说明 |
+|------|------|-----------|------|
+| post_norm | 改为 post-norm | `--norm_rope post` | 注意：当前 TransformerBlock 仅实现 pre-norm，此参数传给了 TransformerLM 但 block 内部未使用 |
+| no_rope | 禁用 RoPE | `--no_rope` | 将 theta 设为 None |
+| silu | 改用 SiLU | `--ffn_type silu` | **暂不生效**，需先修改 TransformerBlock 支持动态 FFN 选择 |
+| no_rms | 移除 RMSNorm | `--no_rms_norm` | 将 final norm 替换为 Identity |
 
 ### 第五步：batch size 与 warmup
 
-| 实验 | `batch_size` | `warmup_steps` |
-|------|-------------|----------------|
-| large_batch | 16 | 4000 |
-| small_batch | 4 | 1000 |
-| long_warmup | 8 | 5000 |
+| 实验 | `batch_size` | `warmup_steps` | 说明 |
+|------|-------------|----------------|------|
+| baseline_batch | 4 | 1000 | 6GB 显存下的安全值 |
+| small_batch | 2 | 500 | 用于更大模型 |
+| large_batch | 8 | 2000 | 仅适用于 minimal 配置（d_model=256） |
 
 ### 第六步：组合最优配置
 
@@ -278,10 +279,42 @@ uv run train.py \
 
 ---
 
+## 显存限制
+
+**硬件约束**：
+- 总 VRAM：16GB
+- 实际可用 N 卡内存：**6144 MiB（6GB）**
+- 安全上限：建议单次实验显存占用不超过 **5.5 GB**（预留 10% 余量）
+
+### 显存监控
+
+实验开始前确认当前显存状态：
+
+```bash
+# 查看当前显存占用
+nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader
+```
+
+### 6GB 显存下的推荐配置
+
+基于 6GB 可用显存，以下配置可安全运行：
+
+| 配置 | `d_model` | `n_layer` | `n_head` | `d_ff` | `max_seq_len` | `batch_size` | 预估显存 |
+|------|-----------|-----------|----------|--------|---------------|--------------|----------|
+| 最小 | 256 | 4 | 4 | 1024 | 256 | 8 | ~2.5 GB |
+| baseline | 512 | 4 | 8 | 2048 | 256 | 4 | ~4.5 GB |
+| 上限 | 512 | 6 | 8 | 2048 | 512 | 2 | ~5.5 GB |
+
+**显存超限处理**：
+- OOM 时优先减小 `batch_size`，其次减小 `max_seq_len`
+- `d_model` 和 `n_layer` 对显存影响最大，调整需谨慎
+- 预估显存公式（粗略）：`显存(GB) ≈ batch_size × seq_len × d_model × n_layer × 0.000002`
+
 ## 超时与崩溃处理
 
 - **超时**：单次 run 超过 10 分钟 → `kill` 进程，记录 `crash`，`git reset`
-- **OOM**：记录 `crash`，尝试减小 `batch_size` 或 `d_model`
+- **OOM**：记录 `crash`，尝试减小 `batch_size`、`max_seq_len` 或 `d_model`
+- **显存超限**：预估显存 > 5.5 GB 的配置禁止运行，先缩小规模
 - **连续 3 次 crash**：退回已知最优配置，换一个完全不同的方向
 - **运行卡住**：检查 GPU 是否空闲，检查数据路径是否正确
 
@@ -308,11 +341,12 @@ uv run train.py \
   --total_steps 500 \
   --eval_interval 100 \
   --log_interval 50 \
-  --batch_size 8 \
+  --batch_size 4 \
   --d_model 512 \
   --n_head 8 \
-  --n_layer 6 \
+  --n_layer 4 \
   --d_ff 2048 \
+  --max_seq_len 256 \
   --max_lr 3e-4 \
   --min_lr 3e-5 \
   --warmup_steps 100 \
@@ -331,11 +365,12 @@ uv run train.py \
   --total_steps 5000 \
   --eval_interval 500 \
   --log_interval 100 \
-  --batch_size 8 \
+  --batch_size 4 \
   --d_model 512 \
   --n_head 8 \
-  --n_layer 6 \
+  --n_layer 4 \
   --d_ff 2048 \
+  --max_seq_len 256 \
   --max_lr 3e-4 \
   --min_lr 3e-5 \
   --warmup_steps 2000 \
@@ -347,4 +382,28 @@ uv run train.py \
 
 ---
 
-*本文档基于 `train.py` 的命令行接口自动生成，适配 wandb 多 run 追踪与两阶段实验策略。*
+## 已知问题与限制
+
+### 1. TransformerBlock 未使用实验参数
+当前 `TransformerBlock` 硬编码了以下行为，**命令行实验参数传入了但不会改变实际行为**：
+- **Pre-norm only**：`--norm_rope` 参数传递给 `TransformerLM`，但 `TransformerBlock` 内部仅实现 pre-norm 结构
+- **SwiGLU only**：`--ffn_type` 参数传递给 `TransformerLM`，但 `TransformerBlock` 硬编码使用 `SwiGLU`
+- **RMSNorm 在 block 内始终启用**：`--no_rms_norm` 仅影响 `TransformerLM` 的 `ln_final`，block 内的 `ln1`/`ln2` 不受影响
+
+若要让消融实验生效，需要修改 `TransformerBlock` 支持：
+- 动态选择 pre-norm / post-norm 结构
+- 动态选择 SwiGLU / SiLU 激活函数
+- 可选禁用 block 内的 RMSNorm
+
+### 2. 数据格式要求
+- 数据需为 `np.memmap` 格式，`dtype=np.uint16`（用于支持 > 32767 的词表）
+- 文件扩展名不限，但内容必须是连续的 token ID 序列
+- 使用 `dataset_process.py` 生成符合格式的数据文件
+
+### 3. 学习率调度器
+- 使用 `CosineAnnealingWarmupScheduler.get_lr_cosine_shedule()` 方法（注意方法名拼写为 `shedule` 而非 `schedule`）
+- 预热阶段：从 0 线性增长到 `max_lr`
+- 退火阶段：余弦衰减到 `min_lr`
+
+---
+
