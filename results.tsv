@@ -1,0 +1,15 @@
+commit	val_loss	memory_gb	wandb_run	status	description
+356d05b	0.7737	-	confirm_apr6_baseline	keep	baseline d512_nhead8_nlayer4_dff2048_seqlen256_bs4_lr3e4
+-	1.2393	-	explore_apr6_lr_low_1e4	discard	lr 1e-4 too low, val_loss worse by 0.46
+-	1.0782	-	explore_apr6_lr_high_6e4	discard	lr 6e-4 too high, val_loss worse by 0.30
+-	1.0686	-	explore_apr6_lr_1e3	discard	lr 1e-3 too high, val_loss worse by 0.29
+-	1.1450	-	explore_apr6_wider_shallow	discard	n_layer=3 too shallow, val_loss worse by 0.37
+-	1.1887	-	explore_apr6_minimal	discard	d_model=256 too small, val_loss worse by 0.41
+-	1.1732	-	explore_apr6_deeper_narrow	discard	d_model=384_n_layer=6, val_loss worse by 0.39
+-	1.0954	-	explore_apr6_no_rope	discard	no RoPE, val_loss worse by 0.32
+-	1.0170	-	explore_apr6_no_rms_norm	discard	no RMSNorm, val_loss worse by 0.24
+-	1.1687	-	explore_apr6_n_layer6	discard	n_layer=6, val_loss worse by 0.39
+-	1.0849	-	explore_apr6_d_ff_4096	discard	d_ff=4096, val_loss worse by 0.31
+-	1.1001	-	explore_apr6_seq_len_512	discard	seq_len=512_bs=2, val_loss worse by 0.32
+-	1.1188	-	explore_apr6_wd_01_warmup_500	discard	wd=0.1_warmup=500, val_loss worse by 0.34
+-	1.1637	-	explore_apr6_d_model_768	discard	d_model=768_bs=2, val_loss worse by 0.39
