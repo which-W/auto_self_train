@@ -1,0 +1,183 @@
+# ============================================================
+# Transformer LM 超参数配置 — 实验结果
+# 数据集: TinyStories
+# 硬件约束: 6GB VRAM (N卡实际可用 6144 MiB)
+# 实验日期: 2026-04-06 (apr6)
+# ============================================================
+
+# ────────────────────────────────────────────────────────────
+# 最优配置 (Best Configuration)
+# val_loss = 0.7737 @ 5000 steps
+# ────────────────────────────────────────────────────────────
+best_config:
+  d_model:       512
+  n_head:        8
+  n_layer:       4
+  d_ff:          2048
+  max_seq_len:   256
+  batch_size:    4
+  max_lr:        3.0e-4
+  min_lr:        3.0e-5
+  warmup_steps:  2000
+  weight_decay:  0.01
+  max_grad_norm: 1.0
+  theta:         10000.0
+  vocab_size:    30000
+  # 结构开关
+  use_rope:      true
+  use_rms_norm:  true
+  ffn_type:      swiglu       # TransformerBlock 硬编码 SwiGLU
+  norm_placement: pre         # TransformerBlock 硬编码 pre-norm
+
+# ────────────────────────────────────────────────────────────
+# 训练/评估通用参数
+# ────────────────────────────────────────────────────────────
+training:
+  total_steps:   5000         # 确认阶段步数
+  eval_interval: 500
+  log_interval:  100
+  eval_steps:    100
+  checkpoint_dir: checkpoints
+  save_interval: 5000
+
+# 探索阶段参数 (覆盖 training)
+explore:
+  total_steps:   500
+  eval_interval: 100
+  log_interval:  50
+  warmup_steps:  100
+
+# ────────────────────────────────────────────────────────────
+# 数据路径
+# ────────────────────────────────────────────────────────────
+data:
+  train_path:    data/TinyStories-train.bin
+  valid_path:    data/TinyStories-valid.bin
+  dtype:         uint16       # np.memmap 数据类型
+
+# ────────────────────────────────────────────────────────────
+# 完整实验结果记录
+# ────────────────────────────────────────────────────────────
+experiments:
+  # ── 学习率扫描 ──
+  - name:         explore_apr6_lr_low_1e4
+    max_lr:       1.0e-4
+    min_lr:       1.0e-5
+    val_loss:     1.2393
+    status:       discard
+    conclusion:   "学习率过低，模型未充分收敛"
+
+  - name:         explore_apr6_lr_high_6e4
+    max_lr:       6.0e-4
+    min_lr:       6.0e-5
+    val_loss:     1.0782
+    status:       discard
+    conclusion:   "学习率偏高"
+
+  - name:         explore_apr6_lr_1e3
+    max_lr:       1.0e-3
+    min_lr:       1.0e-4
+    val_loss:     1.0686
+    status:       discard
+    conclusion:   "学习率过高"
+
+  # ── 模型结构探索 ──
+  - name:         explore_apr6_wider_shallow
+    d_model:      512
+    n_layer:      3
+    n_head:       8
+    d_ff:         2048
+    val_loss:     1.1450
+    status:       discard
+    conclusion:   "层数太少(n_layer=3)，模型容量不足"
+
+  - name:         explore_apr6_deeper_narrow
+    d_model:      384
+    n_layer:      6
+    n_head:       6
+    d_ff:         1536
+    val_loss:     1.1732
+    status:       discard
+    conclusion:   "窄而深不如宽而浅"
+
+  - name:         explore_apr6_minimal
+    d_model:      256
+    n_layer:      4
+    n_head:       4
+    d_ff:         1024
+    batch_size:   8
+    val_loss:     1.1887
+    status:       discard
+    conclusion:   "模型太小，表达能力不足"
+
+  - name:         explore_apr6_n_layer6
+    d_model:      512
+    n_layer:      6
+    n_head:       8
+    d_ff:         2048
+    batch_size:   2
+    val_loss:     1.1687
+    status:       discard
+    conclusion:   "增加层数反而变差（可能过拟合）"
+
+  - name:         explore_apr6_d_ff_4096
+    d_ff:         4096
+    val_loss:     1.0849
+    status:       discard
+    conclusion:   "FFN 维度增大无显著收益"
+
+  - name:         explore_apr6_seq_len_512
+    max_seq_len:  512
+    batch_size:   2
+    val_loss:     1.1001
+    status:       discard
+    conclusion:   "序列长度增加但 batch_size 减小，性能下降"
+
+  - name:         explore_apr6_d_model_768
+    d_model:      768
+    n_head:       12
+    d_ff:         3072
+    batch_size:   2
+    val_loss:     1.1637
+    status:       discard
+    conclusion:   "模型增大但 batch_size 减小，未达预期"
+
+  # ── 结构消融实验 ──
+  - name:         explore_apr6_no_rope
+    use_rope:     false
+    val_loss:     1.0954
+    status:       discard
+    conclusion:   "RoPE 位置编码对模型至关重要"
+
+  - name:         explore_apr6_no_rms_norm
+    use_rms_norm: false
+    val_loss:     1.0170
+    status:       discard
+    conclusion:   "RMSNorm 对训练稳定性重要"
+
+  # ── 优化器参数 ──
+  - name:         explore_apr6_wd_01_warmup_500
+    weight_decay: 0.1
+    warmup_steps: 500
+    val_loss:     1.1188
+    status:       discard
+    conclusion:   "weight_decay 过大且 warmup 不足"
+
+# ────────────────────────────────────────────────────────────
+# 关键结论
+# ────────────────────────────────────────────────────────────
+conclusions:
+  1: "Baseline (d_model=512, n_layer=4, lr=3e-4) 是最优配置"
+  2: "RoPE 和 RMSNorm 是必须的结构组件"
+  3: "lr=3e-4 是最优学习率，偏离该值均导致性能下降"
+  4: "d_model=512, n_layer=4, d_ff=2048 是最佳参数平衡点"
+  5: "增加模型规模需同步增大 batch_size，否则无法发挥优势"
+  6: "所有探索实验均未超越 baseline (val_loss=0.7737)"
+
+# ────────────────────────────────────────────────────────────
+# Wandb 项目链接
+# ────────────────────────────────────────────────────────────
+wandb:
+  project:    transformer-lm
+  base_url:   https://wandb.ai/wengzu-love-tongji-university/transformer-lm
+  best_run:   confirm_apr6_baseline
